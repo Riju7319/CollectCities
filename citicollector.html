@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Country to City Excel Extractor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+  <h2>Upload Country Excel (.xlsx)</h2>
+  <input type="file" id="uploadExcel" accept=".xlsx,.xls" />
+  <button onclick="processCountries()">Start Processing</button>
+
+  <div id="status"></div>
+
+  <script>
+    let countryList = [];
+
+    document.getElementById("uploadExcel").addEventListener("change", function (e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(sheet);
+        countryList = json.map(row => row.CountryName).filter(Boolean);
+        document.getElementById("status").innerText = `Loaded ${countryList.length} countries. Ready to fetch cities.`;
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function fetchCities(country) {
+      const res = await fetch("https://countriesnow.space/api/v0.1/countries/cities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ country: country })
+      });
+
+      const result = await res.json();
+      return result.error ? [] : result.data;
+    }
+
+    async function processCountries() {
+      if (countryList.length === 0) {
+        alert("Please upload an Excel file first.");
+        return;
+      }
+
+      const finalData = [];
+      document.getElementById("status").innerText = "Fetching city data...";
+
+      for (let i = 0; i < countryList.length; i++) {
+        const country = countryList[i];
+        document.getElementById("status").innerText = `Processing ${i + 1}/${countryList.length}: ${country}`;
+
+        try {
+          const cities = await fetchCities(country);
+          cities.forEach(city => {
+            finalData.push({ Country: country, City: city });
+          });
+        } catch (error) {
+          console.error(`Error fetching for ${country}`, error);
+        }
+
+        // Optional delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(finalData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Cities");
+      const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      saveAs(new Blob([wbout], { type: "application/octet-stream" }), "CountryCities.xlsx");
+
+      document.getElementById("status").innerText = `✅ Done! ${finalData.length} cities exported.`;
+    }
+  </script>
+</body>
+</html>
